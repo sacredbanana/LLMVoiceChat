@@ -28,7 +28,7 @@ A fully-featured voice chat client for interacting with LLM servers using speech
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/sacredbanana/LLMVoiceChat
 cd LLMVoiceChat
 ```
 

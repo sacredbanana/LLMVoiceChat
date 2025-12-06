@@ -78,6 +78,8 @@ SPEECH_RATE = os.getenv("SPEECH_RATE", 1.0)
 # Coqui
 COQUI_MODEL = os.getenv("COQUI_TTS_MODEL", "tts_models/en/vctk/vits")
 COQUI_SPEAKER = os.getenv("COQUI_TTS_SPEAKER", "p226")
+COQUI_MODEL_PATH = os.getenv("COQUI_TTS_MODEL_PATH", None)
+COQUI_CONFIG_PATH = os.getenv("COQUI_TTS_CONFIG_PATH", None)
 COQUI_LANGUAGE = os.getenv("COQUI_TTS_LANGUAGE", None)
 COQUI_DEVICE = os.getenv("COQUI_DEVICE", "cpu")
 COQUI_SAMPLE_RATE = os.getenv("COQUI_SAMPLE_RATE", 22050)
@@ -440,7 +442,7 @@ def sanitize_text_for_tts(text: str, speech_rate: float) -> str:
 # Simple TTS (Coqui TTS - fully local)
 # ---------------------------
 class SimpleTTS:
-    def __init__(self, model_name: str, speaker: str, language: Optional[str], device: str, speech_rate: float, sample_rate: int) -> None:
+    def __init__(self, model_name: str, model_path: str, config_path: str, speaker: str, language: Optional[str], device: str, speech_rate: float, sample_rate: int) -> None:
         """
         Uses Coqui TTS locally. You can change the model via --coqui-model or COQUI_MODEL.
         For multi-speaker or multilingual models, you can pass --coqui-speaker / --coqui-language.
@@ -450,8 +452,8 @@ class SimpleTTS:
         # Instantiate TTS; disable progress bar for cleaner console.
         use_gpu = (device.lower() == "cuda")
         stdout_capture = io.StringIO()
-        with redirect_stdout(stdout_capture):
-            self.tts = TTS(model_name=model_name, progress_bar=False, gpu=use_gpu)
+        # with redirect_stdout(stdout_capture):
+        self.tts = TTS(model_name=model_name, model_path=model_path, config_path=config_path, progress_bar=False, gpu=use_gpu)
         self.speaker = speaker
         self.language = language
         self.speech_rate = speech_rate
@@ -474,24 +476,24 @@ class SimpleTTS:
 
         # Synthesize to waveform (numpy array)
         stdout_capture = io.StringIO()
-        with redirect_stdout(stdout_capture):
+        # with redirect_stdout(stdout_capture):
+        try:
             try:
-                try:
-                    wav = self.tts.tts(text=text_clean, split_sentences=False, **kwargs)
-                except TypeError:
-                    # Some models may not support split_sentences kwarg.
-                    wav = self.tts.tts(text=text_clean, **kwargs)
+                wav = self.tts.tts(text=text_clean, split_sentences=False, **kwargs)
             except TypeError:
-                # Model doesn't support speaker/language; retry without extras
-                try:
-                    wav = self.tts.tts(text=text_clean)
-                except Exception:
-                    # Aggressive fallback: strip to alphanumerics and basic punctuation
-                    basic = re.sub(r"[^A-Za-z0-9 \.\,\!\?\;\:\'\-]", " ", text_clean)
-                    basic = re.sub(r"\s+", " ", basic).strip()
-                    if len(basic) < 8:
-                        basic += " Ok."
-                    wav = self.tts.tts(text=basic)
+                # Some models may not support split_sentences kwarg.
+                wav = self.tts.tts(text=text_clean, **kwargs)
+        except TypeError:
+            # Model doesn't support speaker/language; retry without extras
+            try:
+                wav = self.tts.tts(text=text_clean)
+            except Exception:
+                # Aggressive fallback: strip to alphanumerics and basic punctuation
+                basic = re.sub(r"[^A-Za-z0-9 \.\,\!\?\;\:\'\-]", " ", text_clean)
+                basic = re.sub(r"\s+", " ", basic).strip()
+                if len(basic) < 8:
+                    basic += " Ok."
+                wav = self.tts.tts(text=basic)
 
         # Ensure float32 numpy and play with sounddevice
         import numpy as _np
@@ -733,7 +735,7 @@ def main(args):
         tts = None
         print("TTS disabled")
     elif args.speech_engine == "coqui":
-        tts = SimpleTTS(model_name=args.coqui_model, speaker=args.coqui_speaker, language=args.coqui_language, device=args.coqui_device, sample_rate=args.coqui_sample_rate, speech_rate=args.speech_rate)
+        tts = SimpleTTS(model_name=args.coqui_model, model_path=args.coqui_model_path, config_path=args.coqui_config_path, speaker=args.coqui_speaker, language=args.coqui_language, device=args.coqui_device, sample_rate=args.coqui_sample_rate, speech_rate=args.speech_rate)
         print("Using Coqui TTS")
     elif args.speech_engine == "elevenlabs":
         try:
@@ -864,6 +866,8 @@ if __name__ == "__main__":
     parser.add_argument("--speech-engine", "-s", type=str, default=SPEECH_ENGINE, choices=["coqui", "elevenlabs", "macos"], help=f"Speech engine to use (default: {SPEECH_ENGINE})")
     parser.add_argument("--speech-rate", "-r", type=float, default=SPEECH_RATE, help=f"Speech rate control: 1.0 = normal, 0.5 = half speed (slower), 2.0 = double speed (faster) (default: {SPEECH_RATE})")
     parser.add_argument("--coqui-model", default=COQUI_MODEL, help="Coqui TTS model name (e.g., tts_models/en/ljspeech/tacotron2-DDC)")
+    parser.add_argument("--coqui-model-path", default=COQUI_MODEL_PATH, help="Coqui TTS model path (e.g., tts_models/en/ljspeech/tacotron2-DDC)")
+    parser.add_argument("--coqui-config-path", default=COQUI_CONFIG_PATH, help="Coqui TTS config path (e.g., config.json)")
     parser.add_argument("--coqui-speaker", default=COQUI_SPEAKER, help="Optional speaker name/id for multispeaker models")
     parser.add_argument("--coqui-language", default=None, help="Optional language code/name for multilingual models")
     parser.add_argument("--coqui-device", default=COQUI_DEVICE, help="Device for Coqui TTS: 'cpu' or 'cuda'")

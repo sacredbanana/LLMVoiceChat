@@ -319,7 +319,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Acknowledgments
 
-- [OpenAI Whisper](https://github.com/openai/whisper) - Speech recognition
+- [Faster Whisper](https://github.com/SYSTRAN/faster-whisper) - Speech recognition
 - [Coqui TTS](https://github.com/coqui-ai/TTS) - Text-to-speech synthesis
 - [ElevenLabs](https://elevenlabs.io/) - High-quality TTS API
-

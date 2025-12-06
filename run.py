@@ -24,7 +24,7 @@ import select
 import sounddevice as sd
 import numpy as np
 import requests
-import whisper
+from faster_whisper import WhisperModel
 from dotenv import load_dotenv, find_dotenv
 from TTS.api import TTS
 from elevenlabs.client import ElevenLabs
@@ -198,7 +198,9 @@ class VoiceRecorder:
 class WhisperTranscriber:
     def __init__(self, model_name: str, device: str, language: str, sample_rate: int):
         print(f"Loading Whisper model '{model_name}' on {device} at {sample_rate} Hz with language '{language}' (this can take a while)...")
-        self.model = whisper.load_model(model_name, device=device)
+        # Use int8 for CPU, float16 for CUDA
+        compute_type = "float16" if device == "cuda" else "int8"
+        self.model = WhisperModel(model_name, device=device, compute_type=compute_type)
         self.sample_rate = sample_rate
         self.language = language
         print("Whisper loaded.")
@@ -206,18 +208,16 @@ class WhisperTranscriber:
     def transcribe_numpy(self, audio: np.ndarray) -> str:
         """
         Accepts a mono float32 numpy array at sample_rate.
-        Writes to a temporary in-memory WAV and feeds whisper.
+        Uses faster-whisper for transcription.
         """
-        # Whisper's transcribe function can accept a numpy array plus sample rate.
-        # But to be robust, use whisper's built-in preprocessing helper.
         try:
-            kwargs = {}
-            kwargs["fp16"] = False
-            kwargs["task"] = "transcribe"
+            kwargs = {"beam_size": 5}
             if self.language:
                 kwargs["language"] = self.language
-            result = self.model.transcribe(audio, verbose=False, **kwargs)
-            return result.get("text", "").strip()
+            segments, info = self.model.transcribe(audio, **kwargs)
+            # Join all segment texts
+            text = " ".join(segment.text for segment in segments)
+            return text.strip()
         except Exception as e:
             print(f"Error transcribing audio: {e}")
             return None
@@ -452,8 +452,8 @@ class SimpleTTS:
         # Instantiate TTS; disable progress bar for cleaner console.
         use_gpu = (device.lower() == "cuda")
         stdout_capture = io.StringIO()
-        # with redirect_stdout(stdout_capture):
-        self.tts = TTS(model_name=model_name, model_path=model_path, config_path=config_path, progress_bar=False, gpu=use_gpu)
+        with redirect_stdout(stdout_capture):
+            self.tts = TTS(model_name=model_name, model_path=model_path, config_path=config_path, progress_bar=False, gpu=use_gpu)
         self.speaker = speaker
         self.language = language
         self.speech_rate = speech_rate
@@ -476,24 +476,24 @@ class SimpleTTS:
 
         # Synthesize to waveform (numpy array)
         stdout_capture = io.StringIO()
-        # with redirect_stdout(stdout_capture):
-        try:
+        with redirect_stdout(stdout_capture):
             try:
-                wav = self.tts.tts(text=text_clean, split_sentences=False, **kwargs)
+                try:
+                    wav = self.tts.tts(text=text_clean, split_sentences=False, **kwargs)
+                except TypeError:
+                    # Some models may not support split_sentences kwarg.
+                    wav = self.tts.tts(text=text_clean, **kwargs)
             except TypeError:
-                # Some models may not support split_sentences kwarg.
-                wav = self.tts.tts(text=text_clean, **kwargs)
-        except TypeError:
-            # Model doesn't support speaker/language; retry without extras
-            try:
-                wav = self.tts.tts(text=text_clean)
-            except Exception:
-                # Aggressive fallback: strip to alphanumerics and basic punctuation
-                basic = re.sub(r"[^A-Za-z0-9 \.\,\!\?\;\:\'\-]", " ", text_clean)
-                basic = re.sub(r"\s+", " ", basic).strip()
-                if len(basic) < 8:
-                    basic += " Ok."
-                wav = self.tts.tts(text=basic)
+                # Model doesn't support speaker/language; retry without extras
+                try:
+                    wav = self.tts.tts(text=text_clean)
+                except Exception:
+                    # Aggressive fallback: strip to alphanumerics and basic punctuation
+                    basic = re.sub(r"[^A-Za-z0-9 \.\,\!\?\;\:\'\-]", " ", text_clean)
+                    basic = re.sub(r"\s+", " ", basic).strip()
+                    if len(basic) < 8:
+                        basic += " Ok."
+                    wav = self.tts.tts(text=basic)
 
         # Ensure float32 numpy and play with sounddevice
         import numpy as _np
@@ -860,7 +860,9 @@ if __name__ == "__main__":
     parser.add_argument("--whisper-start-threshold", type=float, default=WHISPER_START_THRESHOLD, help=f"Start threshold for Whisper transcription (default: {WHISPER_START_THRESHOLD})")
     parser.add_argument("--whisper-silence-timeout", type=float, default=WHISPER_SILENCE_TIMEOUT, help=f"Silence timeout for Whisper transcription (default: {WHISPER_SILENCE_TIMEOUT})")
     parser.add_argument("--whisper-max-utterance", type=float, default=WHISPER_MAX_UTTERANCE_DURATION, help=f"Max utterance duration for Whisper transcription (default: {WHISPER_MAX_UTTERANCE_DURATION})")
-    parser.add_argument("--whisper-model", default=WHISPER_MODEL, choices=["tiny", "base", "small", "medium", "large"], help=f"Whisper model name (default: {WHISPER_MODEL})")
+    parser.add_argument("--whisper-model", default=WHISPER_MODEL, choices=["tiny", "tiny.en", "base", "base.en",
+            "small", "small.en", "distil-small.en", "medium", "medium.en", "distil-medium.en", "large-v1",
+            "large-v2", "large-v3", "large", "distil-large-v2", "distil-large-v3", "large-v3-turbo", "turbo"], help=f"Whisper model name (default: {WHISPER_MODEL})")
     parser.add_argument("--whisper-device", type=str, default=WHISPER_DEVICE, help=f"Device for whisper (default: {WHISPER_DEVICE})")
     parser.add_argument("--whisper-language", type=str, default=WHISPER_LANGUAGE, help=f"Language hint for whisper, e.g. 'en' (default: {WHISPER_LANGUAGE})")
     parser.add_argument("--speech-engine", "-s", type=str, default=SPEECH_ENGINE, choices=["coqui", "elevenlabs", "macos"], help=f"Speech engine to use (default: {SPEECH_ENGINE})")
